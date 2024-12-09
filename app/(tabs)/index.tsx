@@ -1,74 +1,146 @@
-import { Image, StyleSheet, Platform } from 'react-native';
+// app/(tabs)/index.tsx
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
+import { format } from 'date-fns';
+import { auth, db } from '../../src/config/firebase';
+import { collection, query, where, getDocs, addDoc } from 'firebase/firestore';
+import Calendar from '../../src/components/Calendar/Calendar';
 
-import { HelloWave } from '@/components/HelloWave';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
+export default function Dashboard() {
+  const user = auth.currentUser;
+  const [selectedDates, setSelectedDates] = useState<Date[]>([]);
+  const [usersByDate, setUsersByDate] = useState<Record<string, Array<{ id: string; photoURL: string; displayName: string }>>>({});
+  const [loading, setLoading] = useState(true);
 
-export default function HomeScreen() {
+  useEffect(() => {
+    loadUserDates();
+  }, []);
+
+  const loadUserDates = async () => {
+    if (!user) return;
+
+    try {
+      const datesCollection = collection(db, 'dates');
+      const snapshot = await getDocs(datesCollection);
+      
+      const dateUsers: Record<string, Array<{ id: string; photoURL: string; displayName: string }>> = {};
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const dateStr = format(data.date.toDate(), 'yyyy-MM-dd');
+        if (!dateUsers[dateStr]) {
+          dateUsers[dateStr] = [];
+        }
+        dateUsers[dateStr].push({
+          id: data.userId,
+          photoURL: data.userPhotoURL,
+          displayName: data.userDisplayName,
+        });
+      });
+
+      setUsersByDate(dateUsers);
+      setLoading(false);
+    } catch (error) {
+      console.error('Error loading dates:', error);
+      setLoading(false);
+    }
+  };
+
+  const handleDateSelect = async (date: Date) => {
+    if (!user) return;
+
+    try {
+        const dateStr = format(date, 'yyyy-MM-dd');
+        const datesCollection = collection(db, 'dates');
+        
+        // Check if user already voted for this date
+        const q = query(
+            datesCollection,
+            where('userId', '==', user.uid),
+            where('date', '==', date)
+        );
+        const existingVotes = await getDocs(q);
+
+        if (!existingVotes.empty) {
+            // User already voted for this date, remove the vote
+            const docToDelete = existingVotes.docs[0];
+            await deleteDoc(docToDelete.ref);
+            setSelectedDates(selectedDates.filter(d => 
+                format(d, 'yyyy-MM-dd') !== dateStr
+            ));
+        } else {
+            // User hasn't voted for this date yet
+            if (selectedDates.length >= 5) {
+                Alert.alert('Limit Reached', 'You can only select up to 5 dates');
+                return;
+            }
+            
+            await addDoc(collection(db, 'dates'), {
+                userId: user.uid,
+                userPhotoURL: user.photoURL,
+                userDisplayName: user.displayName || 'Anonymous',
+                date: date,
+                createdAt: new Date(),
+            });
+            setSelectedDates([...selectedDates, date]);
+        }
+
+        loadUserDates();
+    } catch (error) {
+        console.error('Error updating date selection:', error);
+    }
+};
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <Text>Loading calendar...</Text>
+      </View>
+    );
+  }
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
+    <ScrollView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.welcomeText}>
+          Welcome, {user?.displayName || 'Golfer'}!
+        </Text>
+      </View>
+      
+      <View style={styles.calendar}>
+        <Text style={styles.sectionTitle}>Available Dates</Text>
+        <Calendar
+          selectedDates={selectedDates}
+          onDateSelect={handleDateSelect}
+          usersByDate={usersByDate}
+          maxSelections={5}
         />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12'
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-        <ThemedText>
-          Tap the Explore tab to learn more about what's included in this starter app.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          When you're ready, run{' '}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  header: {
+    padding: 20,
+    backgroundColor: '#2C5530',
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  welcomeText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginTop: 40,
+  },
+  calendar: {
+    padding: 20,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#2C5530',
+    marginBottom: 15,
   },
 });
